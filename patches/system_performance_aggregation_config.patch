@@ -1,0 +1,117 @@
+diff --git a/core/modules/system/src/Form/DevelopmentSettingsForm.php b/core/modules/system/src/Form/DevelopmentSettingsForm.php
+index 282d0f02cf..b61865af95 100644
+--- a/core/modules/system/src/Form/DevelopmentSettingsForm.php
++++ b/core/modules/system/src/Form/DevelopmentSettingsForm.php
+@@ -52,10 +52,22 @@ public function getFormId() {
+    * {@inheritdoc}
+    */
+   public function buildForm(array $form, FormStateInterface $form_state) {
++    // System aggregation setting.
++    $directory = 'assets://';
++    $is_writable = is_dir($directory) && is_writable($directory);
++    $disabled = !$is_writable;
++    $disabled_message = '';
++    if (!$is_writable) {
++      $disabled_message = ' ' . $this->t('<strong class="error">Set up the <a href=":file-system">optimized assets file system path</a> to make these optimizations available.</strong>', [':file-system' => Url::fromRoute('system.file_system_settings')->toString()]);
++    }
++    $system_performance = \Drupal::config('system.performance');
++    $performance_css_config = $system_performance->get('css.preprocess');
++    $performance_js_config = $system_performance->get('js.preprocess');
++
+     $form['description'] = [
+       '#plain_text' => $this->t('These settings should only be enabled on development environments and never on production.'),
+     ];
+-
++    $performance_config = \Drupal::config('system.performance');
+     $twig_debug = $this->state->get('twig_debug', FALSE);
+     $twig_cache_disable = $this->state->get('twig_cache_disable', FALSE);
+     $twig_development_state_conditions = [
+@@ -104,6 +116,25 @@ public function buildForm(array $form, FormStateInterface $form_state) {
+       '#default_value' => $this->state->get('disable_rendered_output_cache_bins', FALSE),
+     ];
+ 
++    $form['bandwidth_optimization'] = [
++      '#type' => 'details',
++      '#title' => $this->t('Bandwidth optimization'),
++      '#open' => TRUE,
++      '#description' => $this->t('External resources can be optimized automatically, which can reduce both the size and number of requests made to your website.') . $disabled_message,
++    ];
++    $form['bandwidth_optimization']['preprocess_css'] = [
++      '#type' => 'checkbox',
++      '#title' => $this->t('Aggregate CSS files'),
++      '#default_value' => $performance_css_config,
++      '#disabled' => $disabled,
++    ];
++    $form['bandwidth_optimization']['preprocess_js'] = [
++      '#type' => 'checkbox',
++      '#title' => $this->t('Aggregate JavaScript files'),
++      '#default_value' => $performance_js_config,
++      '#disabled' => $disabled,
++    ];
++
+     $form['actions']['#type'] = 'actions';
+     $form['actions']['submit'] = [
+       '#type' => 'submit',
+@@ -126,7 +157,6 @@ public function submitForm(array &$form, FormStateInterface $form_state) {
+     else {
+       $this->state->delete('disable_rendered_output_cache_bins');
+     }
+-
+     $twig_development_mode = (bool) $form_state->getValue('twig_development_mode');
+     $twig_development_previous = $this->state->getMultiple(['twig_debug', 'twig_cache_disable']);
+     $twig_development = [
+@@ -145,6 +175,13 @@ public function submitForm(array &$form, FormStateInterface $form_state) {
+     if ($invalidate_container || $disable_rendered_output_cache_bins_previous !== $disable_rendered_output_cache_bins) {
+       $this->kernel->invalidateContainer();
+     }
++    // Saved system performance aggregation configuration.
++    $performance_css_config = $form_state->getValue('preprocess_css');
++    $performance_js_config = $form_state->getValue('preprocess_js');
++    \Drupal::configFactory()->getEditable('system.performance')
++      ->set('css.preprocess', $performance_css_config)
++      ->set('js.preprocess', $performance_js_config)
++      ->save();
+ 
+     $this->messenger()->addStatus($this->t('The settings have been saved.'));
+   }
+diff --git a/core/modules/system/src/Form/PerformanceForm.php b/core/modules/system/src/Form/PerformanceForm.php
+index cf26b6dbf1..ea5aeff876 100644
+--- a/core/modules/system/src/Form/PerformanceForm.php
++++ b/core/modules/system/src/Form/PerformanceForm.php
+@@ -133,27 +133,6 @@ public function buildForm(array $form, FormStateInterface $form_state) {
+     if (!$is_writable) {
+       $disabled_message = ' ' . $this->t('<strong class="error">Set up the <a href=":file-system">optimized assets file system path</a> to make these optimizations available.</strong>', [':file-system' => Url::fromRoute('system.file_system_settings')->toString()]);
+     }
+-
+-    $form['bandwidth_optimization'] = [
+-      '#type' => 'details',
+-      '#title' => $this->t('Bandwidth optimization'),
+-      '#open' => TRUE,
+-      '#description' => $this->t('External resources can be optimized automatically, which can reduce both the size and number of requests made to your website.') . $disabled_message,
+-    ];
+-
+-    $form['bandwidth_optimization']['preprocess_css'] = [
+-      '#type' => 'checkbox',
+-      '#title' => $this->t('Aggregate CSS files'),
+-      '#default_value' => $config->get('css.preprocess'),
+-      '#disabled' => $disabled,
+-    ];
+-    $form['bandwidth_optimization']['preprocess_js'] = [
+-      '#type' => 'checkbox',
+-      '#title' => $this->t('Aggregate JavaScript files'),
+-      '#default_value' => $config->get('js.preprocess'),
+-      '#disabled' => $disabled,
+-    ];
+-
+     return parent::buildForm($form, $form_state);
+   }
+ 
+@@ -166,8 +145,6 @@ public function submitForm(array &$form, FormStateInterface $form_state) {
+ 
+     $this->config('system.performance')
+       ->set('cache.page.max_age', $form_state->getValue('page_cache_maximum_age'))
+-      ->set('css.preprocess', $form_state->getValue('preprocess_css'))
+-      ->set('js.preprocess', $form_state->getValue('preprocess_js'))
+       ->save();
+ 
+     parent::submitForm($form, $form_state);
